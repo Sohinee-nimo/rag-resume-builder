@@ -8,7 +8,7 @@ import json
 import os
 
 embed_model = SentenceTransformer("all-MiniLM-L6-v2")
-groq_client = Groq(...)
+groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 # groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
 chroma_client = chromadb.Client()
