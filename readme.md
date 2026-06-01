@@ -2,7 +2,7 @@
 
 > Paste any job description. Get a CV tailored to it in seconds — grounded in your real experience, never hallucinated.
 
-**Live demo →** [your-app.streamlit.app](https://your-app.streamlit.app)
+**Live demo →** [render app](https://rag-resume-builder.onrender.com))
 
 ---
 
