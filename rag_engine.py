@@ -4,39 +4,31 @@
 import os
 import json
 import numpy as np
-import requests
+import streamlit as st
 from groq import Groq
+from sentence_transformers import SentenceTransformer
 
 # ── Groq client (LLM) ────────────────────────────────────────
 groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
-# ── HuggingFace Inference API (Embeddings) ───────────────────
-HF_TOKEN = os.environ.get("HF_TOKEN")
-HF_URL   = "https://api-inference.huggingface.co/pipeline/feature-extraction/sentence-transformers/all-MiniLM-L6-v2"
+
+# ── Local Sentence Transformers (Embeddings) ─────────────────
+@st.cache_resource
+def load_embedding_model():
+    """
+    Loads and caches the embedding model locally inside the cloud container.
+    This bypasses external HTTP requests entirely, resolving DNS errors.
+    """
+    return SentenceTransformer("all-MiniLM-L6-v2")
+
 
 def get_embedding(text):
     """
-    Calls HuggingFace Inference API to embed text.
-    Same model as sentence-transformers (all-MiniLM-L6-v2)
-    but runs on HF servers — no PyTorch install needed.
+    Generates text embeddings locally on the server.
     """
-    response = requests.post(
-        HF_URL,
-        headers={"Authorization": f"Bearer {HF_TOKEN}"},
-        json={"inputs": text, "options": {"wait_for_model": True}},
-        timeout=30
-    )
-    response.raise_for_status()
-    result = response.json()
-
-    # HF returns nested list — average token embeddings into one vector
-    if isinstance(result[0], list):
-        token_vecs = result[0]
-        return [
-            sum(t[i] for t in token_vecs) / len(token_vecs)
-            for i in range(len(token_vecs[0]))
-        ]
-    return result
+    model = load_embedding_model()
+    vector = model.encode(text)
+    return vector.tolist()
 
 
 # ── Pure Python vector store ─────────────────────────────────
@@ -232,9 +224,9 @@ JOB DESCRIPTION:
     jd_skills = json.loads(raw)
 
     # Step 2: find gap
-    matched          = [s for s in jd_skills["required"] if s.lower() in your_skills]
+    matched = [s for s in jd_skills["required"] if s.lower() in your_skills]
     missing_required = [s for s in jd_skills["required"] if s.lower() not in your_skills]
-    missing_preferred= [s for s in jd_skills["preferred"] if s.lower() not in your_skills]
+    missing_preferred = [s for s in jd_skills["preferred"] if s.lower() not in your_skills]
 
     # Step 3: generate recommendations for gaps
     recs = []
@@ -269,8 +261,8 @@ Job context: {job_description[:300]}"""
         recs = json.loads(raw2)
 
     return {
-        "matched":           matched,
-        "missing_required":  missing_required,
+        "matched": matched,
+        "missing_required": missing_required,
         "missing_preferred": missing_preferred,
-        "recommendations":   recs
+        "recommendations": recs
     }
