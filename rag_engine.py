@@ -27,9 +27,13 @@ def get_embedding(text):
     Generates text embeddings locally on the server.
     """
     model = load_embedding_model()
-    # model.encode automatically returns a clean, 1D NumPy array or list
+    # model.encode automatically handles pooling and returns a clean vector
     vector = model.encode(text)
     return vector.tolist()
+
+# ── Pure Python vector store ─────────────────────────────────
+# ... [Keep your remaining VectorStore, chunking, and Groq generation functions as they are] ...
+
 
 
 # ── Pure Python vector store ─────────────────────────────────
