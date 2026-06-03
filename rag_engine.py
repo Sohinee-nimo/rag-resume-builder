@@ -27,13 +27,8 @@ def get_embedding(text):
     Generates text embeddings locally on the server.
     """
     model = load_embedding_model()
-    # model.encode automatically handles pooling and returns a clean vector
     vector = model.encode(text)
     return vector.tolist()
-
-# ── Pure Python vector store ─────────────────────────────────
-# ... [Keep your remaining VectorStore, chunking, and Groq generation functions as they are] ...
-
 
 
 # ── Pure Python vector store ─────────────────────────────────
@@ -229,9 +224,9 @@ JOB DESCRIPTION:
     jd_skills = json.loads(raw)
 
     # Step 2: find gap
-    matched          = [s for s in jd_skills["required"] if s.lower() in your_skills]
+    matched = [s for s in jd_skills["required"] if s.lower() in your_skills]
     missing_required = [s for s in jd_skills["required"] if s.lower() not in your_skills]
-    missing_preferred= [s for s in jd_skills["preferred"] if s.lower() not in your_skills]
+    missing_preferred = [s for s in jd_skills["preferred"] if s.lower() not in your_skills]
 
     # Step 3: generate recommendations for gaps
     recs = []
@@ -266,8 +261,8 @@ Job context: {job_description[:300]}"""
         recs = json.loads(raw2)
 
     return {
-        "matched":           matched,
-        "missing_required":  missing_required,
+        "matched": matched,
+        "missing_required": missing_required,
         "missing_preferred": missing_preferred,
-        "recommendations":   recs
+        "recommendations": recs
     }
