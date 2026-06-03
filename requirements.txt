@@ -1,5 +1,4 @@
-streamlit==1.45.1
-sentence-transformers==3.0.1
-chromadb==0.5.5
-groq==0.9.0
-protobuf==4.25.3
+streamlit
+chromadb
+groq
+requests
