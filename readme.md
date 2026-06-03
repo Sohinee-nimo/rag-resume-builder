@@ -1,5 +1,3 @@
-
-
 ---
 title: RAG Resume Builder
 sdk: streamlit
@@ -7,6 +5,7 @@ sdk_version: 1.58.0
 app_file: app.py
 pinned: false
 ---
+
 # RAG Resume Builder
 > Paste any job description. Get a CV tailored to it in seconds — grounded in your real experience, never hallucinated.
 
