@@ -1,126 +1,157 @@
-# rag_engine.py
-# All the backend logic — chunking, embedding, retrieval, generation
-#trying
-from sentence_transformers import SentenceTransformer
-import chromadb
-from groq import Groq
-import json
-import os
+# app.py
+# The entire web interface — run with: streamlit run app.py
 
-embed_model = SentenceTransformer("all-MiniLM-L6-v2")
-groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
-# groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+import streamlit as st
+import rag_engine as rag
 
-chroma_client = chromadb.Client()
-collection = None
+st.set_page_config(page_title="RAG Resume Builder", page_icon="📄", layout="wide")
+st.title("RAG Resume Builder")
+st.caption("Enter your profile once. Generate a tailored CV for any job.")
 
+# ── session state ─────────────────────────────────────────────
+if "profile" not in st.session_state:
+    st.session_state.profile = None
+if "ingested" not in st.session_state:
+    st.session_state.ingested = False
 
-def build_chunks(profile):
-    chunks = []
-    chunks.append({"id": "summary", "text": f"Professional summary: {profile['summary'].strip()}", "section": "summary"})
-    for i, job in enumerate(profile["experience"]):
-        chunks.append({"id": f"experience_{i}", "text": f"Role: {job['role']} at {job['company']} ({job['duration']})\n{job['details'].strip()}", "section": "experience"})
-    skills_text = "Technical skills:\n"
-    for category, items in profile["skills"].items():
-        skills_text += f"  {category}: {', '.join(items)}\n"
-    chunks.append({"id": "skills", "text": skills_text.strip(), "section": "skills"})
-    for i, proj in enumerate(profile["projects"]):
-        chunks.append({"id": f"project_{i}", "text": f"Project: {proj['name']}\n{proj['details']}", "section": "projects"})
-    chunks.append({"id": "education", "text": f"Education: {profile['education']}\nCertifications: {', '.join(profile['certifications'])}", "section": "education"})
-    return chunks
+# ── sidebar: profile form ─────────────────────────────────────
+with st.sidebar:
+    st.header("Your Profile")
+    st.caption("Fill once — reused for every CV.")
 
+    name    = st.text_input("Full name")
+    summary = st.text_area("Professional summary", height=100)
 
-def ingest_profile(profile):
-    global collection
-    try:
-        chroma_client.delete_collection("resume_profile")
-    except:
-        pass
-    collection = chroma_client.create_collection("resume_profile", metadata={"hnsw:space": "cosine"})
-    for chunk in build_chunks(profile):
-        embedding = embed_model.encode(chunk["text"]).tolist()
-        collection.add(ids=[chunk["id"]], embeddings=[embedding], documents=[chunk["text"]], metadatas=[{"section": chunk["section"]}])
-    return collection.count()
+    st.subheader("Experience")
+    num_jobs = st.number_input("Number of roles", 1, 5, 2)
+    experience = []
+    for i in range(num_jobs):
+        with st.expander(f"Role {i+1}", expanded=(i==0)):
+            experience.append({
+                "role":     st.text_input("Job title",   key=f"role_{i}"),
+                "company":  st.text_input("Company",     key=f"company_{i}"),
+                "duration": st.text_input("Duration",    key=f"duration_{i}"),
+                "details":  st.text_area("Details",      key=f"details_{i}", height=80)
+            })
 
+    st.subheader("Skills")
+    langs  = st.text_input("Languages",   "Python, JavaScript")
+    frames = st.text_input("Frameworks",  "Django, React")
+    tools  = st.text_input("Tools",       "Docker, AWS, Git")
+    soft   = st.text_input("Soft skills", "Team leadership, Agile")
 
-def retrieve_for_jd(job_description, top_k=5):
-    jd_embedding = embed_model.encode(job_description).tolist()
-    results = collection.query(query_embeddings=[jd_embedding], n_results=top_k)
-    return [{"section": m["section"], "text": d} for d, m in zip(results["documents"][0], results["metadatas"][0])]
+    st.subheader("Projects")
+    num_proj = st.number_input("Number of projects", 1, 4, 2)
+    projects = []
+    for i in range(num_proj):
+        with st.expander(f"Project {i+1}", expanded=(i==0)):
+            projects.append({
+                "name":    st.text_input("Project name", key=f"pname_{i}"),
+                "details": st.text_area("Details",       key=f"pdet_{i}", height=60)
+            })
 
+    edu   = st.text_input("Education")
+    certs = st.text_input("Certifications (comma separated)")
 
-def build_context(chunks):
-    return "\n\n---\n\n".join([f"[{c['section'].upper()}]\n{c['text']}" for c in chunks])
+    if st.button("Save & Ingest Profile", type="primary"):
+        if not name:
+            st.error("Name is required.")
+        else:
+            st.session_state.profile = {
+                "name": name, "summary": summary,
+                "experience": [e for e in experience if e["role"]],
+                "skills": {
+                    "languages":   [s.strip() for s in langs.split(",") if s.strip()],
+                    "frameworks":  [s.strip() for s in frames.split(",") if s.strip()],
+                    "tools":       [s.strip() for s in tools.split(",") if s.strip()],
+                    "soft_skills": [s.strip() for s in soft.split(",") if s.strip()]
+                },
+                "projects": [p for p in projects if p["name"]],
+                "education": edu,
+                "certifications": [s.strip() for s in certs.split(",") if s.strip()]
+            }
+            with st.spinner("Embedding your profile..."):
+                count = rag.ingest_profile(st.session_state.profile)
+            st.session_state.ingested = True
+            st.success(f"Profile saved — {count} chunks stored.")
 
+# ── main area: two tabs ───────────────────────────────────────
+tab1, tab2 = st.tabs(["Generate CV", "Skill Gap Analysis"])
 
-def generate_cv(job_description, candidate_name):
-    context = build_context(retrieve_for_jd(job_description))
-    prompt = f"""You are an expert CV writer. Write a tailored CV for {candidate_name}.
-RULES: Only use facts from CANDIDATE BACKGROUND. Do not invent anything.
-Use strong action verbs. Output valid JSON only — no markdown, no explanation.
+with tab1:
+    st.header("Generate a Tailored CV")
+    if not st.session_state.ingested:
+        st.info("Fill your profile in the sidebar and click Save first.")
+    else:
+        jd = st.text_area("Paste the job description", height=200)
+        if st.button("Generate CV", type="primary"):
+            if not jd.strip():
+                st.warning("Paste a job description first.")
+            else:
+                with st.spinner("Retrieving relevant experience and generating CV..."):
+                    cv = rag.generate_cv(jd, st.session_state.profile["name"])
 
-CANDIDATE BACKGROUND:
-{context}
+                st.success("CV generated!")
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    st.subheader(cv["name"])
+                    st.caption(cv["tagline"])
+                    st.markdown("**Summary**")
+                    st.write(cv["summary"])
+                    st.markdown("**Experience**")
+                    for job in cv["experience"]:
+                        st.markdown(f"**{job['role']}** — {job['company']} ({job['duration']})")
+                        for b in job["bullets"]:
+                            st.markdown(f"- {b}")
+                    st.markdown("**Projects**")
+                    for p in cv["projects"]:
+                        st.markdown(f"- **{p['name']}**: {p['description']}")
+                    st.markdown("**Education**")
+                    st.write(cv["education"])
+                with col2:
+                    st.markdown("**Skills**")
+                    st.write("Technical: " + ", ".join(cv["skills"]["technical"]))
+                    st.write("Soft: " + ", ".join(cv["skills"]["soft"]))
 
-JOB DESCRIPTION:
-{job_description}
+                # download button
+                cv_text = f"{cv['name']}\n{cv['tagline']}\n\n{cv['summary']}\n\nEXPERIENCE\n"
+                for job in cv["experience"]:
+                    cv_text += f"\n{job['role']} | {job['company']} | {job['duration']}\n"
+                    for b in job["bullets"]: cv_text += f"  • {b}\n"
+                st.download_button("Download CV (.txt)", cv_text, file_name="tailored_cv.txt")
 
-Return exactly this JSON:
-{{
-  "name": "...", "tagline": "...", "summary": "...",
-  "experience": [{{"role":"...","company":"...","duration":"...","bullets":["..."]}}],
-  "skills": {{"technical":["..."],"soft":["..."]}},
-  "projects": [{{"name":"...","description":"..."}}],
-  "education": "...", "certifications": ["..."]
-}}"""
-    raw = groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=1500, temperature=0.3
-    ).choices[0].message.content.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"): raw = raw[4:]
-    return json.loads(raw)
+with tab2:
+    st.header("Skill Gap Analysis")
+    if not st.session_state.ingested:
+        st.info("Fill your profile in the sidebar and click Save first.")
+    else:
+        jd_gap = st.text_area("Paste the job description to analyse", height=200, key="jd_gap")
+        if st.button("Analyse Gap", type="primary"):
+            if not jd_gap.strip():
+                st.warning("Paste a job description first.")
+            else:
+                with st.spinner("Analysing skill gap..."):
+                    result = rag.analyse_gap(jd_gap, st.session_state.profile)
 
+                total = len(result["matched"]) + len(result["missing_required"])
+                pct = round(len(result["matched"]) / total * 100) if total else 0
 
-def analyse_gap(job_description, profile):
-    your_skills = set()
-    for items in profile["skills"].values():
-        your_skills.update([s.lower() for s in items])
+                st.metric("Match score", f"{pct}%", f"{len(result['matched'])} of {total} required skills covered")
 
-    jd_prompt = f"""Extract skills from this JD. Return ONLY JSON, no markdown:
-{{"required":["..."],"preferred":["..."],"soft_skills":["..."]}}
-JD: {job_description}"""
-    raw = groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": jd_prompt}],
-        max_tokens=400, temperature=0.1
-    ).choices[0].message.content.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"): raw = raw[4:]
-    jd_skills = json.loads(raw)
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.success(f"You have ({len(result['matched'])})")
+                    for s in result["matched"]: st.write(f"✓ {s}")
+                with col2:
+                    st.error(f"Missing required ({len(result['missing_required'])})")
+                    for s in result["missing_required"]: st.write(f"✗ {s}")
+                with col3:
+                    st.warning(f"Missing preferred ({len(result['missing_preferred'])})")
+                    for s in result["missing_preferred"]: st.write(f"○ {s}")
 
-    matched = [s for s in jd_skills["required"] if s.lower() in your_skills]
-    missing_required = [s for s in jd_skills["required"] if s.lower() not in your_skills]
-    missing_preferred = [s for s in jd_skills["preferred"] if s.lower() not in your_skills]
-
-    recs = []
-    if missing_required or missing_preferred:
-        rec_prompt = f"""For each missing skill give learning advice. Return ONLY a JSON array, no markdown:
-[{{"skill":"...","priority":"high/medium","what_to_learn":"...","best_resource":"...","time_estimate":"..."}}]
-Missing required: {missing_required}
-Missing preferred: {missing_preferred}
-Job context: {job_description[:300]}"""
-        raw2 = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": rec_prompt}],
-            max_tokens=800, temperature=0.3
-        ).choices[0].message.content.strip()
-        if raw2.startswith("```"):
-            raw2 = raw2.split("```")[1]
-            if raw2.startswith("json"): raw2 = raw2[4:]
-        recs = json.loads(raw2)
-
-    return {"matched": matched, "missing_required": missing_required, "missing_preferred": missing_preferred, "recommendations": recs}
+                if result["recommendations"]:
+                    st.subheader("Your Learning Roadmap")
+                    for rec in result["recommendations"]:
+                        with st.expander(f"{'🔴' if rec['priority']=='high' else '🟡'} {rec['skill']} — {rec['time_estimate']}"):
+                            st.write(f"**What to learn:** {rec['what_to_learn']}")
+                            st.write(f"**Best resource:** {rec['best_resource']}")
