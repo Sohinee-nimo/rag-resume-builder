@@ -1,19 +1,45 @@
 # rag_engine.py
 # All the backend logic — chunking, embedding, retrieval, generation
 
-from sentence_transformers import SentenceTransformer
+import os
+import json
+import requests
 import chromadb
 from groq import Groq
-import json
-import os
 
-embed_model = SentenceTransformer("all-MiniLM-L6-v2")
+
 groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
 chroma_client = chromadb.Client()
 collection = None
 
+HF_TOKEN = os.environ.get("HF_TOKEN")
+HF_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+HF_URL   = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{HF_MODEL}"
+def get_embedding(text):
+    """
+    Calls Hugging Face Inference API instead of running
+    sentence-transformers locally. Same model, no PyTorch needed.
+    """
+    response = requests.post(
+        HF_URL,
+        headers={"Authorization": f"Bearer {HF_TOKEN}"},
+        json={"inputs": text, "options": {"wait_for_model": True}}
+    )
+    response.raise_for_status()
+    result = response.json()
 
+    # HF returns nested list for sentences — flatten to one vector
+    if isinstance(result[0], list):
+        # average token embeddings into one sentence vector
+        token_vecs = result[0]
+        embedding = [
+            sum(token[i] for token in token_vecs) / len(token_vecs)
+            for i in range(len(token_vecs[0]))
+        ]
+        return embedding
+
+    return result  # already a flat vector
 def build_chunks(profile):
     chunks = []
     chunks.append({"id": "summary", "text": f"Professional summary: {profile['summary'].strip()}", "section": "summary"})
@@ -37,13 +63,13 @@ def ingest_profile(profile):
         pass
     collection = chroma_client.create_collection("resume_profile", metadata={"hnsw:space": "cosine"})
     for chunk in build_chunks(profile):
-        embedding = embed_model.encode(chunk["text"]).tolist()
+        embedding = embed_model.encode(chunk["text"])
         collection.add(ids=[chunk["id"]], embeddings=[embedding], documents=[chunk["text"]], metadatas=[{"section": chunk["section"]}])
     return collection.count()
 
 
 def retrieve_for_jd(job_description, top_k=5):
-    jd_embedding = embed_model.encode(job_description).tolist()
+    jd_embedding = embed_model.encode(job_description)
     results = collection.query(query_embeddings=[jd_embedding], n_results=top_k)
     return [{"section": m["section"], "text": d} for d, m in zip(results["documents"][0], results["metadatas"][0])]
 
