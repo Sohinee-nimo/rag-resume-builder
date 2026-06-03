@@ -1,4 +1,14 @@
 # RAG Resume Builder
+---
+title: RAG Resume Builder
+emoji: 📄
+colorFrom: green
+colorTo: blue
+sdk: streamlit
+sdk_version: 1.32.0
+app_file: app.py
+pinned: false
+---
 
 > Paste any job description. Get a CV tailored to it in seconds — grounded in your real experience, never hallucinated.
 
