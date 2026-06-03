@@ -13,20 +13,15 @@ HF_TOKEN = os.environ.get("HF_TOKEN")
 HF_URL   = "https://api-inference.huggingface.co/pipeline/feature-extraction/sentence-transformers/all-MiniLM-L6-v2"
 
 def get_embedding(text):
-    response = requests.post(
-        HF_URL,
-        headers={"Authorization": f"Bearer {HF_TOKEN}"},
-        json={"inputs": text, "options": {"wait_for_model": True}}
+    """
+    Uses Groq's embedding endpoint — same API key you already have.
+    Model: nomic-embed-text-v1.5 (768 dimensions, free tier)
+    """
+    response = groq_client.embeddings.create(
+        model="nomic-embed-text-v1.5",
+        input=text
     )
-    response.raise_for_status()
-    result = response.json()
-    if isinstance(result[0], list):
-        token_vecs = result[0]
-        return [
-            sum(t[i] for t in token_vecs) / len(token_vecs)
-            for i in range(len(token_vecs[0]))
-        ]
-    return result
+    return response.data[0].embedding
 
 # ── Pure Python vector store (replaces ChromaDB entirely) ─────
 class VectorStore:
