@@ -11,7 +11,7 @@ from groq import Groq
 groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
 # ── HuggingFace Inference API (Embeddings) ───────────────────
-HF_TOKEN = os.environ.get("Sohinee")
+HF_TOKEN = os.environ.get("HF_TOKEN")
 HF_URL   = "https://api-inference.huggingface.co/pipeline/feature-extraction/sentence-transformers/all-MiniLM-L6-v2"
 
 def get_embedding(text):
