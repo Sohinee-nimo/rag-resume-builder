@@ -2,9 +2,6 @@
 # RAG Resume Builder
 ---
 title: RAG Resume Builder
-emoji: 📄
-colorFrom: green
-colorTo: blue
 sdk: streamlit
 sdk_version: 1.58.0
 app_file: app.py
