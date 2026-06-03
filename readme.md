@@ -1,3 +1,4 @@
+
 # RAG Resume Builder
 ---
 title: RAG Resume Builder
@@ -5,14 +6,14 @@ emoji: 📄
 colorFrom: green
 colorTo: blue
 sdk: streamlit
-sdk_version: 1.32.0
+sdk_version: 1.58.0
 app_file: app.py
 pinned: false
 ---
 
 > Paste any job description. Get a CV tailored to it in seconds — grounded in your real experience, never hallucinated.
 
-**Live demo →** [Streamlit](https://rag-resume-builder-wbt7wk7gczr8h7v7mhuhea.streamlit.app/))
+**Live demo →** [Streamlit](https://rag-resume-builder-wbt7wk7gczr8h7v7mhuhea.streamlit.app/)
 
 ---
 
@@ -32,57 +33,60 @@ It also analyses the skill gap between you and the job, and recommends exactly w
 
 ## How RAG works — the architecture
 
+
 ```
+
 YOUR PROFILE (one time)
-        │
-        ▼
-  ┌─────────────┐
-  │   Chunking  │  Split profile into sections
-  │             │  (one job role = one chunk,
-  │             │   skills = one chunk, etc.)
-  └──────┬──────┘
-         │
-         ▼
-  ┌──────────────────┐
-  │  Embedding model │  HuggingFace Inference API
-  │  all-MiniLM-L6   │  converts each chunk into
-  │                  │  384 numbers (a vector)
-  └──────┬───────────┘
-         │
-         ▼
-  ┌──────────────────┐
-  │   VectorStore    │  Custom in-memory store —
-  │   (pure Python)  │  3 synced lists holding
-  │                  │  vectors, text, metadata
-  └──────────────────┘
+│
+▼
+┌─────────────┐
+│   Chunking  │  Split profile into sections
+│             │  (one job role = one chunk,
+│             │   skills = one chunk, etc.)
+└──────┬──────┘
+│
+▼
+┌──────────────────┐
+│  Embedding model │  Local SentenceTransformer
+│  all-MiniLM-L6   │  runs inside the app container
+│   (via PyTorch)  │  to convert text to vectors
+└──────┬───────────┘
+│
+▼
+┌──────────────────┐
+│   VectorStore    │  Custom in-memory store —
+│   (pure Python)  │  3 synced lists holding
+│                  │  vectors, text, metadata
+└──────────────────┘
 
 JOB DESCRIPTION (every time)
-        │
-        ▼
-  ┌─────────────┐
-  │  Embed JD   │  Same model embeds the JD
-  └──────┬──────┘  into the same vector space
-         │
-         ▼
-  ┌──────────────────┐
-  │ Cosine similarity│  numpy dot product finds
-  │     search       │  top-k most relevant chunks
-  │    (top-k=5)     │  from your profile
-  └──────┬───────────┘
-         │
-         ▼
-  ┌─────────────┐
-  │   Prompt    │  Retrieved chunks + JD +
-  │ engineering │  strict rules assembled
-  │             │  into a grounded prompt
-  └──────┬──────┘
-         │
-         ▼
-  ┌──────────────────┐
-  │  LLaMA 3.3 70B   │  Groq API generates CV
-  │  via Groq API    │  as structured JSON —
-  │                  │  only from retrieved context
-  └──────────────────┘
+│
+▼
+┌─────────────┐
+│   Embed JD  │  Same model embeds the JD
+└──────┬──────┘  into the same vector space
+│
+▼
+┌──────────────────┐
+│ Cosine similarity│  numpy dot product finds
+│     search       │  top-k most relevant chunks
+│    (top-k=5)     │  from your profile
+└──────┬───────────┘
+│
+▼
+┌─────────────┐
+│   Prompt    │  Retrieved chunks + JD +
+│ engineering │  strict rules assembled
+│             │  into a grounded prompt
+└──────┬──────┘
+│
+▼
+┌──────────────────┐
+│   LLaMA 3.3 70B  │  Groq API generates CV
+│   via Groq API   │  as structured JSON —
+│                  │  only from retrieved context
+└──────────────────┘
+
 ```
 
 ### Why RAG instead of just prompting?
@@ -93,7 +97,7 @@ RAG fixes this by retrieving only the relevant chunks before generation. The LLM
 
 ### Why a custom vector store instead of ChromaDB?
 
-ChromaDB pulled in `opentelemetry`, `protobuf`, and `grpcio` as dependencies. These three libraries had cascading version conflicts with NumPy 2.0 and Python 3.11 on every free deployment platform (Streamlit Cloud, Render, Vercel). The app crashed at import before a single line of our code ran.
+ChromaDB pulled in `opentelemetry`, `protobuf`, and `grpcio` as dependencies. These libraries had cascading version conflicts with NumPy and Python execution environments on free deployment platforms (Streamlit Cloud, Render, Vercel). The app crashed at import before a single line of our code ran.
 
 The solution: a 20-line pure Python `VectorStore` class using three synced lists and NumPy cosine similarity. Zero extra dependencies, identical functionality for our use case, deploys everywhere cleanly.
 
@@ -111,6 +115,7 @@ class VectorStore:
         top = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
         return [{"text": self.documents[i], "section": self.metadatas[i]["section"]}
                 for i in top]
+
 ```
 
 This is the same maths ChromaDB uses internally — just without the packaging overhead.
@@ -119,28 +124,29 @@ This is the same maths ChromaDB uses internally — just without the packaging o
 
 ## Features
 
-- One-time profile setup — fill a form once, reuse for every application
-- Semantic search — finds relevant experience even when exact words differ ("AWS" matches "cloud infrastructure")
-- Tailored CV generation — rewrites bullet points to match JD language and priorities
-- Skill gap analysis — compares JD requirements against your profile, scores your match percentage
-- Learning roadmap — recommends specific topics, resources, and time estimates for missing skills
-- Download — exports CV and gap report as `.txt` files
+* **One-time profile setup** — fill a form once, reuse for every application
+* **Semantic search** — finds relevant experience even when exact words differ ("AWS" matches "cloud infrastructure")
+* **Tailored CV generation** — rewrites bullet points to match JD language and priorities
+* **Skill gap analysis** — compares JD requirements against your profile, scores your match percentage
+* **Learning roadmap** — recommends specific topics, resources, and time estimates for missing skills
+* **Local Vectors** — fully self-contained text embedding without reliance on unstable external inference keys
+* **Download** — exports CV and gap report as `.txt` files
 
 ---
 
 ## Tech stack
 
 | Layer | Tool | Why |
-|---|---|---|
-| Embeddings | HuggingFace Inference API (all-MiniLM-L6-v2) | Free, no PyTorch install, runs on HF servers |
-| Vector store | Custom `VectorStore` class | Zero dependencies, no deployment conflicts |
-| LLM | Groq + LLaMA 3.3 70B | Free tier, ~500 tokens/sec on custom LPU hardware |
-| UI | Streamlit | Fast to build, one-command deploy |
-| Similarity | NumPy cosine similarity | No extra library needed, same maths as any vector DB |
-| Language | Python 3.11 | — |
-| Hosting | Streamlit Cloud | Free, auto-deploys from GitHub on push |
+| --- | --- | --- |
+| **Embeddings** | `sentence-transformers` (`all-MiniLM-L6-v2`) | Local, internal execution container. Immune to external API network drops or DNS resolution failures. |
+| **Vector store** | Custom `VectorStore` class | Zero external DB dependencies, zero deployment conflicts |
+| **LLM** | Groq + LLaMA 3.3 70B | Free tier, ultra-fast generation on dedicated LPU hardware |
+| **UI** | Streamlit | Fast to build, clean web-form architecture |
+| **Similarity** | NumPy cosine similarity | No extra heavy software needed, standard dot-product math |
+| **Language** | Python 3.11 | Optimized environment |
+| **Hosting** | Streamlit Cloud | Free, auto-deploys from GitHub on push |
 
-**Total cost: Rs. 0.** Every layer uses a free tier or open-source library.
+**Total running cost: Rs. 0.** Every layer uses a free tier or an open-source library.
 
 ---
 
@@ -150,114 +156,104 @@ This is the same maths ChromaDB uses internally — just without the packaging o
 rag-resume-builder/
 │
 ├── app.py              # Streamlit UI — profile form, CV tab, gap analysis tab
-├── rag_engine.py       # All RAG logic — chunking, embedding, retrieval, generation
-├── requirements.txt    # Four dependencies only: streamlit, groq, requests, numpy
+├── rag_engine.py       # All RAG logic — chunking, local embedding, retrieval, generation
+├── requirements.txt    # Four clean dependencies: streamlit, groq, numpy, sentence-transformers
 ├── runtime.txt         # Pins Python 3.11 for Streamlit Cloud
-├── .env                # GROQ_API_KEY + HF_TOKEN (local only, never committed)
+├── .env                # GROQ_API_KEY (local only, never committed to git)
 ├── .gitignore
 └── README.md
-```
 
-The separation between `app.py` and `rag_engine.py` is intentional — the RAG pipeline is completely UI-agnostic. You could swap Streamlit for a FastAPI backend or a CLI without touching `rag_engine.py`.
+```
 
 ---
 
 ## Run it locally
 
 ```bash
-# Clone
-git clone https://github.com/YOUR_USERNAME/rag-resume-builder.git
+# Clone the repository
+git clone [https://github.com/YOUR_USERNAME/rag-resume-builder.git](https://github.com/YOUR_USERNAME/rag-resume-builder.git)
 cd rag-resume-builder
 
-# Install (only 4 packages — installs in seconds)
+# Install dependencies
 pip install -r requirements.txt
 
-# Add API keys
+# Add your Groq API key
 echo "GROQ_API_KEY=your_groq_key" > .env
-echo "HF_TOKEN=your_hf_token" >> .env
 
-# Run
+# Run the app
 streamlit run app.py
+
 ```
 
-Get your free keys:
-- Groq API key → [console.groq.com](https://console.groq.com) (no credit card)
-- HuggingFace token → [huggingface.co](https://huggingface.co) → Settings → Access Tokens
+Get your free key:
+
+* Groq API key → [console.groq.com](https://console.groq.com) (No credit card required)
 
 ---
 
 ## Deploy to Streamlit Cloud
 
-1. Push this repo to GitHub
-2. Go to [streamlit.io/cloud](https://streamlit.io/cloud) → New app
-3. Pick your repo, branch `main`, main file `app.py`
-4. Under Advanced settings → Secrets, add:
-   ```
-   GROQ_API_KEY = "your_groq_key"
-   HF_TOKEN     = "your_hf_token"
-   ```
-5. Click Deploy — live in ~2 minutes at `your-app.streamlit.app`
+1. Push this repository to GitHub.
+2. Go to [streamlit.io/cloud](https://streamlit.io/cloud) → **New app**.
+3. Select your repository, branch `main`, and main file paths as `app.py`.
+4. Click **Advanced settings** → **Secrets**, and add your model engine credential keys:
+```toml
+GROQ_API_KEY = "your_groq_key"
+
+```
+
+
+5. Click **Deploy**. Your app will be live in about 2 minutes!
 
 ---
 
 ## Key design decisions
 
-**Chunking strategy** — each chunk maps to one logical unit of experience (one job role, one skill cluster, one project). Smaller chunks = more precise retrieval. If the whole CV were one chunk, every query would retrieve everything and nothing would be targeted.
+**Local sentence-transformers over Web API** — While hosted API inference tools save space, free hosting platforms frequently suffer from cluster DNS bugs (`NameResolutionError`). Processing the **`all-MiniLM-L6-v2`** model internally within your container space makes the RAG logic faster and immune to third-party web routing timeouts.
 
-**Cosine similarity over keyword search** — traditional keyword search would miss "built scalable APIs" when the JD says "REST API development." Cosine similarity on embeddings captures semantic meaning, so linguistically different but conceptually similar text scores highly.
+**Streamlit Caching for Heavy Resources** — Reloading neural network model files on every interaction consumes system memory. Wrapping the model load in `@st.cache_resource` ensures it parses into server memory exactly once on initial startup, allowing instantaneous sub-second user queries.
 
-**HuggingFace API over local sentence-transformers** — `sentence-transformers` requires PyTorch (~800MB). Every free deployment platform has a build memory cap around 512MB–1GB, so the build crashed before the app started. The HuggingFace Inference API runs the same model on their servers — identical output, ~50MB install size.
+**Chunking strategy** — Each chunk maps to one logical unit of experience (one job role, one skill cluster, one project). Smaller chunks mean more precise retrieval. If the whole CV were one chunk, every query would retrieve everything and nothing would be targeted.
 
-**temperature=0.3 for generation** — low temperature keeps the LLM factual and consistent. Higher values produce more creative output but also more hallucinations — the opposite of what you want in a CV.
+**Cosine similarity over keyword search** — Traditional keyword search would miss "built scalable APIs" if the JD says "REST API development." Cosine similarity on embeddings captures semantic meaning, so linguistically different but conceptually similar text scores highly.
 
-**Structured JSON output** — the LLM is prompted to return strict JSON rather than free text. This makes output programmatically parseable and lets the UI render sections cleanly without regex hacks. The schema is defined explicitly in the prompt.
+**temperature=0.3 for generation** — A low temperature keeps the LLM factual and consistent. Higher values produce more creative output but also more hallucinations — the opposite of what you want in a professional CV.
 
-**Anti-hallucination rule in prompt** — the single most important line: "Only use facts from CANDIDATE BACKGROUND. Do not invent anything." Without this, the LLM invents impressive-sounding experience the candidate doesn't have. This grounds every generated bullet to retrieved reality.
+**Structured JSON output** — The LLM is prompted to return strict JSON rather than free text. This makes output programmatically parseable and lets the UI render sections cleanly without fragile regex parser hacks.
 
-**Skill gap uses set intersection, not AI** — comparing your skills to JD requirements is a plain Python set operation, not an LLM call. The LLM is only used where it genuinely adds value: extracting unstructured skills from raw JD text, and generating learning advice. Everything else is deterministic code.
+**Anti-hallucination rule in prompt** — The single most important line: *"Only use facts from CANDIDATE BACKGROUND. Do not invent anything."* This forces every generated bullet point to ground itself in retrieved reality.
 
----
-
-## What I learned building this
-
-- How embedding models represent semantic meaning as vectors — why "AWS" and "cloud infrastructure" get similar embeddings despite sharing no words
-- How cosine similarity works geometrically — measuring the angle between vectors rather than their magnitude
-- How chunking strategy directly affects retrieval quality — too large loses precision, too small loses context
-- How to write grounded LLM prompts that prevent hallucination by constraining the model to retrieved context only
-- How to structure a RAG pipeline so retrieval logic is decoupled from generation logic
-- How to debug dependency conflicts across Python packages — NumPy 2.0 breaking changes, protobuf version pinning, build memory limits on free deployment tiers
-- Why building a simple custom solution (20-line VectorStore) can be better engineering than reaching for a complex library (ChromaDB) when the use case doesn't need the extra features
+**Skill gap uses set intersection, not AI** — Comparing your skills to JD requirements is a plain Python set operation, not an LLM call. The LLM is only used where it genuinely adds value: extracting unstructured skills from raw JD text, and generating learning advice. Everything else is deterministic code.
 
 ---
 
 ## Deployment challenges solved
 
-This project hit three real-world deployment bugs that are worth documenting:
+**Bug 1 — External API NameResolutionError Overcome**
+Using raw web requests to external endpoints frequently caused the application to crash with a `gaierror: [Errno -2]` when cloud infrastructure dropped external host links.
+*Fix:* Migrated the pipeline to a local execution layer with `sentence-transformers`. By pairing this with the modern `uv` pip package manager on Streamlit Cloud, the runtime environment downloads and spins up the weights natively without breaking server memory caps.
 
-**Bug 1 — sentence-transformers crashes build**
-PyTorch is ~800MB. Streamlit Cloud's build limit is ~1GB. The build ran out of memory before the app started.
-Fix: replaced with HuggingFace Inference API — same model, no local install.
-
-**Bug 2 — ChromaDB breaks on Python 3.14**
-ChromaDB's telemetry module imported `opentelemetry` which used deprecated protobuf descriptors removed in newer protobuf releases.
-Fix: pinned `chromadb==0.4.24` and `numpy==1.26.4`, added `runtime.txt` to force Python 3.11.
+**Bug 2 — ChromaDB breaks on modern python environments**
+ChromaDB's telemetry module imported `opentelemetry` which had deprecated protobuf descriptors that crashed on startup.
+*Fix:* Eliminated ChromaDB entirely and replaced it with our custom `VectorStore` class.
 
 **Bug 3 — ChromaDB breaks on NumPy 2.0**
-`chromadb==0.5.x` used `np.float_` which was removed in NumPy 2.0. Streamlit Cloud installed NumPy 2.4.6 by default.
-Fix: replaced ChromaDB entirely with a custom `VectorStore` class. Zero dependencies, guaranteed to deploy.
+Older vector databases used legacy types like `np.float_` which were removed in modern NumPy releases.
+*Fix:* Writing a clean vector class utilizing fundamental matrix vector operations ensures the code is completely independent of dependency deprecation cycles.
 
 ---
 
 ## Potential extensions
 
-- [ ] PDF export using `reportlab` or `weasyprint`
-- [ ] Persistent vector store — save with `numpy.save()` so profile survives session restarts
-- [ ] Cover letter generator using the same RAG pipeline
-- [ ] Match score history — track how your fit improves as you learn new skills
-- [ ] Multi-user support with profile stored per user in a database
-- [ ] Interview question generator based on JD + your profile gaps
+* [ ] PDF export using `reportlab` or `weasyprint`
+* [ ] Persistent vector store — save with `numpy.save()` so profile survives session restarts
+* [ ] Cover letter generator using the same RAG pipeline
+* [ ] Match score history — track how your fit improves as you learn new skills
+* [ ] Multi-user support with profile stored per user in a database
+* [ ] Interview question generator based on JD + your profile gaps
 
 ---
+
 
 ## Author
 
