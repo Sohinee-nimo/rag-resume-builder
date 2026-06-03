@@ -1,26 +1,18 @@
 # rag_engine.py
-# All the backend logic — chunking, embedding, retrieval, generation
-
 import os
 import json
 import requests
-import chromadb
+import numpy as np
 from groq import Groq
 
-
+# ── Groq client ───────────────────────────────────────────────
 groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
-chroma_client = chromadb.Client()
-collection = None
-
+# ── HuggingFace embeddings ────────────────────────────────────
 HF_TOKEN = os.environ.get("HF_TOKEN")
-HF_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-HF_URL   = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{HF_MODEL}"
+HF_URL   = "https://api-inference.huggingface.co/pipeline/feature-extraction/sentence-transformers/all-MiniLM-L6-v2"
+
 def get_embedding(text):
-    """
-    Calls Hugging Face Inference API instead of running
-    sentence-transformers locally. Same model, no PyTorch needed.
-    """
     response = requests.post(
         HF_URL,
         headers={"Authorization": f"Bearer {HF_TOKEN}"},
@@ -28,54 +20,107 @@ def get_embedding(text):
     )
     response.raise_for_status()
     result = response.json()
-
-    # HF returns nested list for sentences — flatten to one vector
     if isinstance(result[0], list):
-        # average token embeddings into one sentence vector
         token_vecs = result[0]
-        embedding = [
-            sum(token[i] for token in token_vecs) / len(token_vecs)
+        return [
+            sum(t[i] for t in token_vecs) / len(token_vecs)
             for i in range(len(token_vecs[0]))
         ]
-        return embedding
+    return result
 
-    return result  # already a flat vector
+# ── Pure Python vector store (replaces ChromaDB entirely) ─────
+class VectorStore:
+    """
+    Stores embeddings in a plain Python list.
+    Searches using cosine similarity with numpy.
+    No external dependencies — works everywhere.
+    """
+    def __init__(self):
+        self.embeddings = []   # list of numpy arrays
+        self.documents  = []   # original text
+        self.metadatas  = []   # section labels
+
+    def clear(self):
+        self.embeddings = []
+        self.documents  = []
+        self.metadatas  = []
+
+    def add(self, embedding, document, metadata):
+        self.embeddings.append(np.array(embedding))
+        self.documents.append(document)
+        self.metadatas.append(metadata)
+
+    def query(self, query_embedding, top_k=5):
+        if not self.embeddings:
+            return []
+        q = np.array(query_embedding)
+        # cosine similarity = dot product of unit vectors
+        scores = []
+        for emb in self.embeddings:
+            score = np.dot(q, emb) / (np.linalg.norm(q) * np.linalg.norm(emb) + 1e-10)
+            scores.append(score)
+        # return top_k indices sorted by score descending
+        top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
+        return [
+            {"text": self.documents[i], "section": self.metadatas[i]["section"]}
+            for i in top_indices
+        ]
+
+    def count(self):
+        return len(self.documents)
+
+# single global store — persists for the Streamlit session
+vector_store = VectorStore()
+
+
 def build_chunks(profile):
     chunks = []
-    chunks.append({"id": "summary", "text": f"Professional summary: {profile['summary'].strip()}", "section": "summary"})
-    for i, job in enumerate(profile["experience"]):
-        chunks.append({"id": f"experience_{i}", "text": f"Role: {job['role']} at {job['company']} ({job['duration']})\n{job['details'].strip()}", "section": "experience"})
+    chunks.append({
+        "text": f"Professional summary: {profile['summary'].strip()}",
+        "section": "summary"
+    })
+    for job in profile["experience"]:
+        chunks.append({
+            "text": f"Role: {job['role']} at {job['company']} ({job['duration']})\n{job['details'].strip()}",
+            "section": "experience"
+        })
     skills_text = "Technical skills:\n"
     for category, items in profile["skills"].items():
         skills_text += f"  {category}: {', '.join(items)}\n"
-    chunks.append({"id": "skills", "text": skills_text.strip(), "section": "skills"})
-    for i, proj in enumerate(profile["projects"]):
-        chunks.append({"id": f"project_{i}", "text": f"Project: {proj['name']}\n{proj['details']}", "section": "projects"})
-    chunks.append({"id": "education", "text": f"Education: {profile['education']}\nCertifications: {', '.join(profile['certifications'])}", "section": "education"})
+    chunks.append({"text": skills_text.strip(), "section": "skills"})
+    for proj in profile["projects"]:
+        chunks.append({
+            "text": f"Project: {proj['name']}\n{proj['details']}",
+            "section": "projects"
+        })
+    chunks.append({
+        "text": f"Education: {profile['education']}\nCertifications: {', '.join(profile['certifications'])}",
+        "section": "education"
+    })
     return chunks
 
 
 def ingest_profile(profile):
-    global collection
-    try:
-        chroma_client.delete_collection("resume_profile")
-    except:
-        pass
-    collection = chroma_client.create_collection("resume_profile", metadata={"hnsw:space": "cosine"})
+    vector_store.clear()
     for chunk in build_chunks(profile):
-        embedding = embed_model.encode(chunk["text"])
-        collection.add(ids=[chunk["id"]], embeddings=[embedding], documents=[chunk["text"]], metadatas=[{"section": chunk["section"]}])
-    return collection.count()
+        embedding = get_embedding(chunk["text"])
+        vector_store.add(
+            embedding=embedding,
+            document=chunk["text"],
+            metadata={"section": chunk["section"]}
+        )
+    return vector_store.count()
 
 
 def retrieve_for_jd(job_description, top_k=5):
-    jd_embedding = embed_model.encode(job_description)
-    results = collection.query(query_embeddings=[jd_embedding], n_results=top_k)
-    return [{"section": m["section"], "text": d} for d, m in zip(results["documents"][0], results["metadatas"][0])]
+    jd_embedding = get_embedding(job_description)
+    return vector_store.query(jd_embedding, top_k=top_k)
 
 
 def build_context(chunks):
-    return "\n\n---\n\n".join([f"[{c['section'].upper()}]\n{c['text']}" for c in chunks])
+    return "\n\n---\n\n".join([
+        f"[{c['section'].upper()}]\n{c['text']}" for c in chunks
+    ])
 
 
 def generate_cv(job_description, candidate_name):
@@ -101,11 +146,13 @@ Return exactly this JSON:
     raw = groq_client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": prompt}],
-        max_tokens=1500, temperature=0.3
+        max_tokens=1500,
+        temperature=0.3
     ).choices[0].message.content.strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]
-        if raw.startswith("json"): raw = raw[4:]
+        if raw.startswith("json"):
+            raw = raw[4:]
     return json.loads(raw)
 
 
@@ -120,15 +167,17 @@ JD: {job_description}"""
     raw = groq_client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": jd_prompt}],
-        max_tokens=400, temperature=0.1
+        max_tokens=400,
+        temperature=0.1
     ).choices[0].message.content.strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]
-        if raw.startswith("json"): raw = raw[4:]
+        if raw.startswith("json"):
+            raw = raw[4:]
     jd_skills = json.loads(raw)
 
-    matched = [s for s in jd_skills["required"] if s.lower() in your_skills]
-    missing_required = [s for s in jd_skills["required"] if s.lower() not in your_skills]
+    matched           = [s for s in jd_skills["required"] if s.lower() in your_skills]
+    missing_required  = [s for s in jd_skills["required"] if s.lower() not in your_skills]
     missing_preferred = [s for s in jd_skills["preferred"] if s.lower() not in your_skills]
 
     recs = []
@@ -141,11 +190,18 @@ Job context: {job_description[:300]}"""
         raw2 = groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": rec_prompt}],
-            max_tokens=800, temperature=0.3
+            max_tokens=800,
+            temperature=0.3
         ).choices[0].message.content.strip()
         if raw2.startswith("```"):
             raw2 = raw2.split("```")[1]
-            if raw2.startswith("json"): raw2 = raw2[4:]
+            if raw2.startswith("json"):
+                raw2 = raw2[4:]
         recs = json.loads(raw2)
 
-    return {"matched": matched, "missing_required": missing_required, "missing_preferred": missing_preferred, "recommendations": recs}
+    return {
+        "matched": matched,
+        "missing_required": missing_required,
+        "missing_preferred": missing_preferred,
+        "recommendations": recs
+    }

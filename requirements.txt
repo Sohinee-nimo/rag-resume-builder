@@ -1,5 +1,4 @@
 streamlit
-chromadb==0.5.23
-numpy==1.26.4
 groq
 requests
+numpy==1.26.4
